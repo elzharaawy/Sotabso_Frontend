@@ -1,3 +1,4 @@
+// blog-editor.component.jsx
 import { Link, useNavigate, useParams } from "react-router-dom";
 import darkLogo from "../imgs/logo-dark.png";
 import lightLogo from "../imgs/logo-light.png";
@@ -7,7 +8,7 @@ import darkBanner from "../imgs/blog banner dark.png";
 import { useContext, useEffect } from "react";
 import { Toaster, toast } from "react-hot-toast";
 import { EditorContext } from "../pages/editor.pages";
-import { uploadImage } from "../common/upload";
+import { uploadImage, deleteImage } from "../common/upload";
 import EditorJS from "@editorjs/editorjs";
 import { tools } from "./tools.component";
 import axios from "axios";
@@ -16,22 +17,22 @@ import { ThemeContext, UserContext } from "../App";
 const BlogEditor = () => {
   const {
     blog,
-    blog: { title, banner, content, tags, des },
+    blog: { title, banner, content, tags, des, banner_public_id },
     setBlog,
     textEditor,
     setTextEditor,
     setEditorState,
   } = useContext(EditorContext);
 
-  let {
+  const {
     userAuth: { access_token },
   } = useContext(UserContext);
-  let { theme, setTheme } = useContext(ThemeContext);
+
+  const { theme } = useContext(ThemeContext);
   const { blog_id } = useParams();
+  const navigate = useNavigate();
 
-  let navigate = useNavigate();
-
-  //use effect
+  // Initialize EditorJS
   useEffect(() => {
     if (!textEditor.isReady) {
       setTextEditor(
@@ -45,29 +46,46 @@ const BlogEditor = () => {
     }
   }, []);
 
-  const handleBannerUpload = (e) => {
-    const img = e.target.files[0];
-    if (!img) return;
+  // ─── Banner Upload ──────────────────────────────────────────────────────────
+  const handleBannerUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
 
-    const loadingToast = toast.loading("Uploading...");
+    const loadingToast = toast.loading("Uploading banner...");
 
-    uploadImage(img)
-      .then((url) => {
-        toast.dismiss(loadingToast);
+    try {
+      // Delete old banner from Cloudinary if it exists
+      // deleteImage never throws — returns false silently on failure
+      if (banner_public_id) {
+        await deleteImage(banner_public_id);
+      }
 
-        if (url) {
-          toast.success("Uploaded 👍");
-          setBlog({ ...blog, banner: url });
-        } else {
-          toast.error("Upload failed");
-        }
-      })
-      .catch(() => {
-        toast.dismiss(loadingToast);
-        toast.error("Upload failed");
-      });
+      // uploadImage returns { url, public_id, width, height, format }
+      const result = await uploadImage(file);
+
+      if (!result?.url) {
+        throw new Error("Upload failed - no URL returned");
+      }
+
+      // Functional update prevents stale state
+      setBlog((prev) => ({
+        ...prev,
+        banner: result.url,
+        banner_public_id: result.public_id,
+      }));
+
+      toast.success("Banner uploaded! 🎉");
+    } catch (error) {
+      console.error("Banner upload error:", error);
+      toast.error(error.message || "Upload failed. Please try again.");
+    } finally {
+      toast.dismiss(loadingToast);
+      // Reset so the same file can be re-selected if needed
+      e.target.value = "";
+    }
   };
 
+  // ─── Title ─────────────────────────────────────────────────────────────────
   const handleTitleKeyDown = (e) => {
     if (e.key === "Enter") e.preventDefault();
   };
@@ -76,18 +94,18 @@ const BlogEditor = () => {
     const input = e.target;
     input.style.height = "auto";
     input.style.height = input.scrollHeight + "px";
-    setBlog({ ...blog, title: input.value });
+    setBlog((prev) => ({ ...prev, title: input.value }));
   };
 
   const handleError = (e) => {
-    e.currentTarget.src = theme == "light" ? lightBanner : darkBanner;
+    e.currentTarget.src = theme === "light" ? lightBanner : darkBanner;
   };
 
+  // ─── Publish ───────────────────────────────────────────────────────────────
   const handlePublishEvent = () => {
-    if (!banner.length) {
+    if (!banner?.length) {
       return toast.error("Upload a blog banner to publish it");
     }
-
     if (!title.length) {
       return toast.error("Write blog title to publish it");
     }
@@ -97,36 +115,36 @@ const BlogEditor = () => {
         .save()
         .then((data) => {
           if (data.blocks.length) {
-            setBlog({ ...blog, content: data });
+            setBlog((prev) => ({ ...prev, content: data }));
             setEditorState("publish");
           } else {
-            return toast.error("Write something in your blog to publish it");
+            toast.error("Write something in your blog to publish it");
           }
         })
         .catch((err) => {
-          console.log(err);
+          console.error(err);
+          toast.error("Failed to save editor content");
         });
     }
   };
 
+  // ─── Save Draft ────────────────────────────────────────────────────────────
   const handleSaveDraft = (e) => {
-    if (e.target.className.includes("disable")) {
-      return;
-    }
+    if (e.target.className.includes("disable")) return;
 
     if (!title.length) {
       return toast.error("Write blog title before saving it as a draft");
     }
 
-    let loadingToast = toast.loading("Saving Draft....");
-
+    const loadingToast = toast.loading("Saving Draft...");
     e.target.classList.add("disable");
 
     if (textEditor.isReady) {
       textEditor.save().then((content) => {
-        let blogObj = {
+        const blogObj = {
           title,
           banner,
+          banner_public_id,
           des,
           content,
           tags,
@@ -137,39 +155,31 @@ const BlogEditor = () => {
           .post(
             import.meta.env.VITE_SERVER_DOMAIN + "/create-blog",
             { ...blogObj, id: blog_id },
-            {
-              headers: {
-                Authorization: `Bearer ${access_token}`,
-              },
-            },
+            { headers: { Authorization: `Bearer ${access_token}` } },
           )
           .then(() => {
             e.target.classList.remove("disable");
-
             toast.dismiss(loadingToast);
             toast.success("Saved 👍");
-
-            setTimeout(() => {
-              navigate("/dashboard/blogs?tab=draft");
-            }, 500);
+            setTimeout(() => navigate("/dashboard/blogs?tab=draft"), 500);
           })
           .catch(({ response }) => {
             e.target.classList.remove("disable");
             toast.dismiss(loadingToast);
-
-            return toast.error(response.data.error);
+            toast.error(response?.data?.error || "Failed to save draft");
           });
       });
     }
   };
 
+  // ─── Render ────────────────────────────────────────────────────────────────
   return (
     <>
       <Toaster />
 
       <nav className="navbar">
         <Link to="/" className="flex-none w-10">
-          <img src={theme == "light" ? darkLogo : lightLogo} alt="Logo" />
+          <img src={theme === "light" ? darkLogo : lightLogo} alt="Logo" />
         </Link>
 
         <p className="max-md:hidden text-black line-clamp-1 w-full">
@@ -189,38 +199,46 @@ const BlogEditor = () => {
       <AnimationWrapper>
         <section>
           <div className="mx-auto max-w-[900px] w-full">
+            {/* Banner */}
             <div className="relative aspect-video hover:opacity-80 bg-white border-4 border-grey">
               <label
                 htmlFor="uploadBanner"
                 className="cursor-pointer block w-full h-full"
               >
                 <img
-                  src={banner || (theme == "light" ? lightBanner : darkBanner)}
+                  src={
+                    typeof banner === "string" && banner.length
+                      ? banner
+                      : theme === "light"
+                        ? lightBanner
+                        : darkBanner
+                  }
                   className="z-20 w-full h-full object-cover"
                   alt="Blog banner"
                   onError={handleError}
                 />
-
                 <input
                   id="uploadBanner"
                   type="file"
-                  accept=".png, .jpg, .jpeg"
+                  accept=".png, .jpg, .jpeg, .webp"
                   hidden
                   onChange={handleBannerUpload}
                 />
               </label>
             </div>
 
+            {/* Title */}
             <textarea
-              defaultValue={title}
+              value={title}
               placeholder="Blog Title"
               className="text-4xl font-medium w-full h-20 outline-none resize-none mt-10 leading-tight placeholder:opacity-40 bg-white"
               onKeyDown={handleTitleKeyDown}
               onChange={handleTitleChange}
-              value={title}
             />
 
             <hr className="w-full opacity-10 my-5" />
+
+            {/* Editor */}
             <div id="textEditor" className="font-gelasio"></div>
           </div>
         </section>
