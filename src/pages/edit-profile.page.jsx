@@ -58,27 +58,34 @@ const EditProfile = () => {
     const img = e.target.files?.[0];
     if (!img) return;
 
+    // Show local preview immediately
     profileImgEle.current.src = URL.createObjectURL(img);
     setUpdatedProfileImg(img);
   };
 
   const handleImageUpload = async (e) => {
     e.preventDefault();
-    if (!updatedProfileImg) return;
+    if (!updatedProfileImg) {
+      return toast.error("Please select an image first");
+    }
 
     const loadingToast = toast.loading("Uploading...");
 
     try {
-      const url = await uploadImage(updatedProfileImg);
+      // uploadImage now returns { url, public_id }
+      const result = await uploadImage(updatedProfileImg);
 
-      if (!url) {
-        toast.error("Upload failed");
-        return;
+      if (!result || !result.url) {
+        return toast.error("Upload failed - no URL returned");
       }
 
+      // Send the URL to backend to save on user profile
       await axios.post(
         import.meta.env.VITE_SERVER_DOMAIN + "/update-profile-img",
-        { profile_img: url },
+        {
+          profile_img: result.url,
+          profile_img_public_id: result.public_id, // Save for future deletion
+        },
         {
           headers: {
             Authorization: `Bearer ${access_token}`,
@@ -86,19 +93,32 @@ const EditProfile = () => {
         },
       );
 
+      // Update local profile state with new image URL
       setProfile((prev) => ({
         ...prev,
         personal_info: {
           ...prev.personal_info,
-          profile_img: url,
+          profile_img: result.url,
         },
       }));
+
+      // Update session so navbar profile img also refreshes
+      const newUserAuth = {
+        ...userAuth,
+        profile_img: result.url,
+      };
+      storeInSession("user", JSON.stringify(newUserAuth));
+      setUserAuth(newUserAuth);
 
       toast.success("Profile image updated 👍");
       setUpdatedProfileImg(null);
     } catch (err) {
-      console.log(err);
-      toast.error("Upload failed");
+      console.error("Profile image upload error:", err);
+      toast.error(err.message || "Upload failed");
+
+      // Reset preview to original on error
+      profileImgEle.current.src = profile_img;
+      setUpdatedProfileImg(null);
     } finally {
       toast.dismiss(loadingToast);
     }
@@ -161,7 +181,6 @@ const EditProfile = () => {
         if (userAuth.username !== data.username) {
           const newUserAuth = {
             ...userAuth,
-
             username: data.username,
           };
 
@@ -214,9 +233,11 @@ const EditProfile = () => {
               <button
                 type="button"
                 onClick={handleImageUpload}
-                className="btn-light mt-5 max-lg:center lg:w-full px-10"
+                className={`btn-light mt-5 max-lg:center lg:w-full px-10 ${
+                  updatedProfileImg ? "" : "opacity-50 cursor-not-allowed"
+                }`}
               >
-                Upload
+                {updatedProfileImg ? "Upload" : "Select Image First"}
               </button>
             </div>
 
@@ -277,6 +298,7 @@ const EditProfile = () => {
                   />
                 ))}
               </div>
+
               <button
                 className="btn-dark w-auto px-10"
                 type="submit"
