@@ -1,4 +1,4 @@
-// importing tools
+// tools.component.jsx
 import Embed from "@editorjs/embed";
 import List from "@editorjs/list";
 import Image from "@editorjs/image";
@@ -8,83 +8,70 @@ import Marker from "@editorjs/marker";
 import InlineCode from "@editorjs/inline-code";
 import { uploadImage } from "../common/upload";
 
-
+// ─── Upload by File ───────────────────────────────────────────────────────────
 const uploadImageByFile = async (file) => {
   try {
-    const url = await uploadImage(file);
+    // uploadImage returns { url, public_id, width, height, format }
+    const result = await uploadImage(file);
 
-    if (!url) {
-      throw new Error("Upload failed");
+    if (!result?.url) {
+      throw new Error("Upload failed - no URL returned");
     }
 
+    // EditorJS image plugin expects { success: 1, file: { url } }
     return {
       success: 1,
-      file: { url },
+      file: { url: result.url },
     };
   } catch (error) {
     console.error("EditorJS file upload error:", error);
-
     return {
       success: 0,
-      error: "Image upload failed",
+      error: error.message || "Image upload failed",
     };
   }
 };
 
-
-
-
-const uploadImageByURL = (e) => {
-  let link = new Promise((resolve, reject) => {
-    try {
-      resolve(e);
-    } catch (err) {
-      reject(err);
-    }
-  });
-
-  return link.then((url) => {
-    return {
-      success: 1,
-      file: { url },
-    };
+// ─── Upload by URL ────────────────────────────────────────────────────────────
+const uploadImageByURL = (url) => {
+  return Promise.resolve({
+    success: 1,
+    file: { url },
   });
 };
 
-
+// ─── Tools Config ─────────────────────────────────────────────────────────────
 export const tools = {
   embed: Embed,
-  list: {
-  class: List,
-  inlineToolbar: true,
-},
 
-image: {
-  class: Image,
-  config: {
-    uploader: {
-      //uploadby url  
-      uploadByUrl: uploadImageByURL,
-      // uploadByFile:
-      uploadByFile: uploadImageByFile,
+  list: {
+    class: List,
+    inlineToolbar: true,
+  },
+
+  image: {
+    class: Image,
+    config: {
+      uploader: {
+        uploadByUrl: uploadImageByURL,
+        uploadByFile: uploadImageByFile,
+      },
     },
   },
-},
 
-
-header: {
-  class: Header,
-  config: {
-    placeholder: "Type Heading....",
-    levels: [2, 3],
-    defaultLevel: 2,
+  header: {
+    class: Header,
+    config: {
+      placeholder: "Type Heading....",
+      levels: [2, 3],
+      defaultLevel: 2,
+    },
   },
-},
 
-quote: {
-  class: Quote,
-  inlineToolbar: true,
-},
+  quote: {
+    class: Quote,
+    inlineToolbar: true,
+  },
 
   marker: Marker,
   inlineCode: InlineCode,
